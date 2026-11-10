@@ -1,0 +1,121 @@
+
+services:
+
+  # Base de données
+  postgres:
+    image: postgres:16
+    container_name: pretix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pretix
+      POSTGRES_USER: pretix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pretix-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pretix -d pretix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cache et broker de messages
+  redis:
+    image: redis:7-alpine
+    container_name: pretix-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - pretix-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Migration de la base de données (exécutée une seule fois)
+  migrate:
+    image: pretix-devops:v1
+    container_name: pretix-migrate
+    command: ["python3", "-m", "pretix", "migrate", "--noinput"]
+    restart: "no"
+    volumes:
+      - ./config/pretix.cfg:/etc/pretix/pretix.cfg:ro
+      - pretix_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - pretix-network
+
+  # Backend Pretix : Django + Gunicorn
+  web:
+    image: pretix-devops:v1
+    container_name: pretix-web
+    restart: unless-stopped
+    volumes:
+      - ./config/pretix.cfg:/etc/pretix/pretix.cfg:ro
+      - pretix_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - pretix-network
+
+  # Traitements asynchrones
+  worker:
+    image: pretix-devops:v1
+    container_name: pretix-worker
+    command: ["celery", "-A", "pretix.celery_app", "worker", "-l", "info"]
+    restart: unless-stopped
+    volumes:
+      - ./config/pretix.cfg:/etc/pretix/pretix.cfg:ro
+      - pretix_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - pretix-network
+
+  # Tâches périodiques
+  cron:
+    image: pretix-devops:v1
+    container_name: pretix-cron
+    command: ["python3", "-m", "pretix", "runperiodic"]
+    restart: unless-stopped
+    volumes:
+      - ./config/pretix.cfg:/etc/pretix/pretix.cfg:ro
+      - pretix_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - pretix-network
+
+  # Reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: pretix-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deployment/devops/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+    networks:
+      - pretix-network
+
+networks:
+  pretix-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  pretix_data:
