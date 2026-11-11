@@ -1,0 +1,126 @@
+
+name: Pretix CI/CD
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+
+  # ==========================================
+  # JOB 1 : TEST
+  # ==========================================
+  test:
+    name: Run Pretix Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gettext \
+            git \
+            libffi-dev \
+            libssl-dev \
+            libxml2-dev \
+            libxslt1-dev
+
+      - name: Install Pretix development dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          python -m pip install -e ".[dev]"
+
+      - name: Run automated tests
+        working-directory: src
+        run: py.test
+
+
+  # ==========================================
+  # JOB 2 : BUILD DOCKER IMAGE
+  # ==========================================
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          IMAGE="${IMAGE_NAME}"
+
+          docker build \
+            -f Dockerfile.devops \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:${GITHUB_SHA}" \
+            .
+
+      - name: Export Docker image
+        run: |
+          docker save \
+            "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:${GITHUB_SHA}" \
+            -o pretix-image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pretix-docker-image
+          path: pretix-image.tar
+          retention-days: 1
+
+
+  # ==========================================
+  # JOB 3 : PUSH TO GHCR
+  # ==========================================
+  push:
+    name: Push Image to GHCR
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pretix-docker-image
+
+      - name: Load Docker image
+        run: docker load -i pretix-image.tar
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        run: |
+          docker push "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:${GITHUB_SHA}"
+
