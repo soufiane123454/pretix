@@ -1,0 +1,5 @@
+[check-manifest]
+ignore =
+    Dockerfile.devops
+    docker-compose.yml
+    config/pretix.cfg.example
