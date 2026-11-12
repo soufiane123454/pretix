@@ -44,6 +44,7 @@ jobs:
             libxml2-dev \
             libxslt1-dev
 
+      
       - name: Install Pretix development dependencies
         run: |
           python -m pip install --upgrade pip setuptools
@@ -53,12 +54,13 @@ jobs:
         working-directory: src
         run: make all compress
 
-        - name: Install Playwright Chromium
+      - name: Install Playwright Chromium
         run: python -m playwright install --with-deps chromium
 
       - name: Run automated tests
         working-directory: src
         run: py.test
+
 
 
   # ==========================================
