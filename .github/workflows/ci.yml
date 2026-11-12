@@ -53,6 +53,9 @@ jobs:
         working-directory: src
         run: make all compress
 
+        - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
       - name: Run automated tests
         working-directory: src
         run: py.test
