@@ -161,6 +161,11 @@ jobs:
             "${IMAGE_NAME}:${GITHUB_SHA}" \
             -c "import pretix; print('Pretix image is ready')"
 
+  
+
+  # ==========================================
+  # JOB 5 : AUTOMATED STAGING DEPLOYMENT
+  # ==========================================
   deploy-staging:
     name: Deploy Pretix Staging
     runs-on: ubuntu-latest
@@ -174,7 +179,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
- - name: Login to GHCR
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -182,9 +187,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull Pretix image
-        run: docker pull "${IMAGE_NAME}:${GITHUB_SHA}
-
-
+        run: docker pull "${IMAGE_NAME}:${GITHUB_SHA}"
 
       - name: Generate staging configuration
         shell: bash
@@ -221,8 +224,6 @@ jobs:
           backend=redis://redis:6379/2
           EOF
 
-
-
       - name: Validate staging configuration
         run: |
           docker compose --env-file .env.staging \
@@ -235,28 +236,39 @@ jobs:
             up -d postgres redis
 
       - name: Wait for PostgreSQL and Redis
+        shell: bash
         run: |
           for service in postgres redis; do
             echo "Waiting for $service..."
+
+            CID=$(docker compose --env-file .env.staging \
+              -f docker-compose-staging.yml ps -q "$service")
+
+            if [ -z "$CID" ]; then
+              echo "Container $service not found"
+              exit 1
+            fi
+
+            healthy=false
+
             for i in $(seq 1 30); do
-              status=$(docker compose --env-file .env.staging \
-                -f docker-compose-staging.yml \
-                ps --format json "$service" \
-                | python3 -c '
-import json,sys
-s=sys.stdin.read().strip()
-print(json.loads(s).get("Health","") if s else "")
-')
+              status=$(docker inspect \
+                --format '{{.State.Health.Status}}' "$CID")
+
               if [ "$status" = "healthy" ]; then
                 echo "$service is healthy"
+                healthy=true
                 break
               fi
-              if [ "$i" -eq 30 ]; then
-                echo "$service did not become healthy"
-                exit 1
-              fi
+
+              echo "$service: $status"
               sleep 2
             done
+
+            if [ "$healthy" != "true" ]; then
+              echo "$service did not become healthy"
+              exit 1
+            fi
           done
 
       - name: Run database migrations
@@ -270,8 +282,6 @@ print(json.loads(s).get("Health","") if s else "")
           docker compose --env-file .env.staging \
             -f docker-compose-staging.yml \
             up -d --no-deps web worker nginx
-
-
 
       - name: Wait for Pretix HTTP response
         shell: bash
@@ -321,3 +331,4 @@ print(json.loads(s).get("Health","") if s else "")
           docker compose --env-file .env.staging \
             -f docker-compose-staging.yml \
             logs --tail=80 postgres redis migrate web worker nginx
+
