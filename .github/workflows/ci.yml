@@ -332,7 +332,6 @@ jobs:
             -f docker-compose-staging.yml \
             logs --tail=80 postgres redis migrate web worker nginx
 
-            
   # ==========================================
   # JOB 6 : TRIGGER PRIVATE VM STAGING CD
   # ==========================================
@@ -377,5 +376,4 @@ jobs:
             "https://api.github.com/repos/soufiane123454/pretix-staging-deploy/actions/workflows/deploy-vm-staging.yml/dispatches"
 
           echo "Private staging CD triggered successfully"
-
 
